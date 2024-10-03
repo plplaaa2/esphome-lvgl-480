@@ -1,0 +1,2437 @@
+substitutions:
+  name: "your-device-name"  #소문자만
+  device_description: Your device description
+  light_1_name: "서재등"   # 내부 스위치명
+  light_1_room: "서  재"   # 내부 스위치 위치
+  light_2_name: "전체 전등" # HA 스위치명
+  light_2_room: "조  명"  # HA 스위치 위치
+  light_switch_2: switch.light_switch_lb_right  #HA 스위치 entity id
+  indoor_temp: sensor.smartmi_air_purifier_temperature  # HA 실내 온도 센서 entity id
+  indoor_hum: sensor.smartmi_air_purifier_humidity  # HA 실내 습도 센서 entity id
+  aircon_id: climate.eeokeon  #HA 에어컨 entity id
+  latitude: "37"    # 집의 위도
+  longitude: "126"   # 집의 경도
+  weather_characters: " !#%'()+,-./0123456789:;<>?@ABCDEFGHIJKLMNOPQRSTUVWYZ[]_abcdefghijklmnopqrstuvwxyz{|}°²³µ맑음흐림대체로비뇌우안개폭호구름많동서남북알수없매좋높보통쾌적나쁨최악시내위험자외오존미세초먼지선월화목금토일풍데이터습도실온단양아조감건함주"
+  allowed_characters: " !#%'()+,-./0123456789:;<>?@ABCDEFGHIJKLMNOPQRSTUVWYZ[]_abcdefghijklmnopqrstuvwxyz{|}°²³µ실내외거서재주방다용도화장안베란우좌측전체에어컨가습창문생시볼륨로비간접보조블라인드현설버티컬온관중등냉고송명자수동난풍제꺼짐강약정기날씨디오메뉴너지소량사월당태양광발모일통계단남은필터취침켜공청닫힘열림면밝대절복귀"
+  title_characters: " !#%'()+,-./0123456789:;<>?@ABCDEFGHIJKLMNOPQRSTUVWYZ[]_abcdefghijklmnopqrstuvwxyz{|}오전후일월화수목금토"
+
+esphome:
+  name: "${name}"
+  comment: "${device_description}"
+  platformio_options:
+    build_flags: "-DBOARD_HAS_PSRAM"
+    board_build.arduino.memory_type: qio_opi
+    board_build.flash_mode: dio
+    #board_upload.maximum_ram_size: 524288    
+  on_boot: 
+    then:
+      - light.turn_on: 
+          id: backlight
+          brightness: !lambda return id(backlight_brightness).state / 100;
+
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      COMPILER_OPTIMIZATION_SIZE: y
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
+      CONFIG_SPIRAM_RODATA: y
+  
+  flash_size: 16MB
+  partitions: "default_16MB.csv"
+  
+psram:
+  mode: octal
+  speed: 80MHz
+
+# Enable logging
+logger:
+  level: DEBUG
+  #baud_rate: 0
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_key
+  on_client_connected:
+    - if:
+        condition:
+          lambda: 'return (0 == client_info.find("Home Assistant "));'
+        then:
+          - lvgl.widget.show: wifi_connected
+          - lvgl.widget.hide: wifi_disconnected
+          
+  on_client_disconnected:
+    - if:
+        condition:
+          lambda: 'return (0 == client_info.find("Home Assistant "));'
+        then:
+          - lvgl.widget.hide: wifi_connected
+          - lvgl.widget.show: wifi_disconnected
+
+ota:
+  - platform: esphome
+    password: !secret hotspot_pw
+
+wifi:
+  id: iptime
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: HIGH
+  fast_connect: false
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "${name} hotspot"
+    password: !secret hotspot_pw
+
+captive_portal:
+
+i2c:
+  scl: GPIO45
+  sda: GPIO19
+  scan: True
+
+spi: 
+  clk_pin: GPIO48
+  mosi_pin: GPIO47
+
+#uart:
+ # tx_pin: GPIO43
+  #rx_pin: GPIO44
+  #baud_rate: 9600
+light:
+  - platform: monochromatic
+    output: backlight_pwm
+    id: backlight
+    name: "${name} Back Light"
+    restore_mode: RESTORE_AND_ON
+    on_turn_on: 
+      then:
+        - light.control: 
+            id: backlight
+            brightness: !lambda return id(backlight_brightness).state / 100;
+        - lvgl.resume:
+    on_turn_off: 
+      then:
+        - lvgl.pause:
+
+  - platform: binary
+    output: internal_relay
+    name: ${name} Light Switch
+    id: light_switch_1
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      then:
+        - lvgl.widget.update:
+            id: light_switch_button_1
+            state:
+              checked: true
+        - lvgl.widget.update:
+            id: light_switch_button_checked
+            state:
+              checked: true
+    on_turn_off:
+      then:
+        - lvgl.widget.update:
+            id: light_switch_button_1
+            state:
+              checked: false
+        - lvgl.widget.update:
+            id: light_switch_button_checked
+            state:
+              checked: false
+
+output:
+  - platform: ledc
+    id: backlight_pwm
+    pin: GPIO38
+    frequency: 1000Hz
+    min_power: 0.3
+    zero_means_zero: True  
+
+  - platform: gpio
+    id: internal_relay
+    pin: 40
+  
+
+# LCD 디스플레이 설정
+display:
+  - platform: st7701s
+    id: my_display
+    update_interval: never
+    auto_clear_enabled: false
+    data_rate: 2MHz
+    spi_mode: MODE3
+    color_order: RGB
+    invert_colors: false
+    dimensions:
+      width: 480
+      height: 480
+    cs_pin: 39
+    de_pin: 18
+    hsync_pin: 16
+    vsync_pin: 17
+    pclk_pin: 21
+    pclk_frequency: 12MHz
+    pclk_inverted: false
+    hsync_pulse_width: 8
+    hsync_front_porch: 10
+    hsync_back_porch: 20
+    vsync_pulse_width: 8
+    vsync_front_porch: 10
+    vsync_back_porch: 10
+    init_sequence:
+      - 1
+      # Custom sequences are an array, first byte is command, the rest are data.
+      - [0xFF, 0x77, 0x01, 0x00, 0x00, 0x10] # CMD2_BKSEL_BK0
+      - [0xCD, 0x00] # disable MDT flag
+    data_pins:
+      red:
+        - 11         # R1
+        - 12         # R2
+        - 13         # R3
+        - 14         # R4
+        - 0          # R5
+      green:
+        - 8          # G0
+        - 20         # G1
+        - 3          # G2
+        - 46         # G3
+        - 9          # G4
+        - 10         # G5 
+      blue:
+        - 4          # B1
+        - 5          # B2
+        - 6          # B3
+        - 7          # B4
+        - 15         # B5
+# 터치 스크린 설정
+touchscreen:
+  platform: gt911
+  transform:
+    mirror_x: false
+    mirror_y: false
+  id: my_touchscreen
+  display: my_display
+  on_touch:
+    - lambda: |-
+          ESP_LOGI("cal", "x=%d, y=%d, x_raw=%d, y_raw=%0d",
+              touch.x,
+              touch.y,
+              touch.x_raw,
+              touch.y_raw
+              );
+    - if:
+        condition:
+          - light.is_off: backlight
+        then:
+          - light.turn_on: 
+              id: backlight
+              brightness: !lambda return id(backlight_brightness).state / 100;
+
+time:
+  - platform: homeassistant
+    id: time_comp
+    on_time_sync:
+      - script.execute: time_update
+      - script.execute: date_update
+    on_time:
+      - minutes: '*'
+        seconds: '0'
+        then:
+          - script.execute: time_update
+          - script.execute: date_update
+sun:
+  id: sun_time
+  latitude: $latitude     
+  longitude: $longitude   
+
+number:
+  - platform: template
+    name: "${name} Weather Return Time"
+    optimistic: true
+    id: return_timeout
+    unit_of_measurement: "s"
+    initial_value: 30
+    restore_value: true    
+    min_value: 10
+    max_value: 300
+    step: 5
+    mode: box
+  - platform: template
+    name: "${name} LCD Screen Timeout"
+    optimistic: true
+    id: screen_timeout
+    unit_of_measurement: "s"
+    initial_value: 300
+    restore_value: true    
+    min_value: 10
+    max_value: 300
+    step: 5
+    mode: box
+
+  - platform: template
+    name: "${name} BackLight Brightness"
+    optimistic: true
+    id: backlight_brightness
+    unit_of_measurement: "%"
+    initial_value: 50
+    restore_value: true
+    min_value: 5
+    max_value: 100
+    step: 5
+    mode: box
+    on_value: 
+      then:
+        lvgl.slider.update: 
+          id: slide_brightness
+          value: !lambda return x;
+
+script:
+# Time update  
+  - id: time_update
+    then:
+      - lvgl.label.update:
+          id: title_time
+          text: !lambda |-
+            static char time_buf[17];
+            auto now = id(time_comp).now();
+            bool is_pm = now.hour >= 12;
+            int hour_12 = now.hour % 12;
+            if (hour_12 == 0) {
+                hour_12 = 12; // 12 AM/PM should be displayed as 12, not 0
+            }
+            snprintf(time_buf, sizeof(time_buf), "%s %2d:%02d", is_pm ? "오후" : "오전", hour_12, now.minute );
+            return time_buf;      
+
+  - id: date_update
+    then:
+      - lvgl.label.update:
+          id: title_date
+          text: !lambda |-
+            static char date_buf[30];
+            auto now = id(time_comp).now();
+            const char* weekdays[] = {"일", "월", "화", "수", "목", "금", "토"};
+            snprintf(date_buf, sizeof(date_buf), "%04d-%02d-%02d (%s)", now.year, now.month, now.day_of_month, weekdays[now.day_of_week - 1]);
+            return date_buf;
+      
+  - id: light_up
+    then:
+      - if:
+          condition:
+            light.is_off: backlight
+          then:
+            - light.turn_on: 
+                id: backlight
+                brightness: !lambda return id(backlight_brightness).state / 100;
+
+image:
+#날씨 아이콘
+  - file: "weather/sunny.png"
+    id: sunny
+    type: RGB565
+    resize: 150x150
+    use_transparency: true
+  - file: "weather/cloudy.png"
+    id: cloudy
+    type: RGB565
+    resize: 150x150
+    use_transparency: true    
+  - file: "weather/clearnight.png"
+    id: clearnight
+    type: RGB565
+    resize: 150x150
+    use_transparency: true      
+  - file: "weather/hail.png"
+    id: hail
+    type: RGB565
+    resize: 150x150
+    use_transparency: true
+  - file: "weather/lightning.png"
+    id: lightning
+    type: RGB565
+    resize: 150x150
+    use_transparency: true
+  - file: "weather/nightpartlycloud.png"
+    id: nightpartlycloud
+    type: RGB565
+    resize: 150x150
+    use_transparency: true
+  - file: "weather/partlycloud.png"
+    id: partlycloud
+    type: RGB565
+    resize: 150x150
+    use_transparency: true
+  - file: "weather/scloudy.png"
+    id: scloud
+    type: RGB565
+    resize: 150x150
+    use_transparency: true    
+  - file: "weather/pouring.png"
+    id: pouring
+    type: RGB565
+    resize: 150x150
+    use_transparency: true
+  - file: "weather/rainy.png"
+    id: rainy
+    type: RGB565
+    resize: 150x150
+    use_transparency: true
+  - file: "weather/snowy.png"
+    id: snowy
+    type: RGB565
+    resize: 150x150
+    use_transparency: true
+  - file: "weather/windy.png"
+    id: windy
+    type: RGB565
+    resize: 150x150
+    use_transparency: true                      
+
+# 폰트 설정
+font:
+  - file: "fonts/Roboto-Regular.woff"
+    id: regular_20
+    size: 20
+    bpp: 4
+    glyphs: ${allowed_characters}
+  - file: "fonts/Roboto-Bold.woff"
+    id: regular_25
+    size: 25
+    bpp: 4
+    glyphs: ${allowed_characters}
+    extras:
+      - file: 'fonts/materialdesignicons-webfont.ttf' # http://materialdesignicons.com/cdn/7.4.47/ 
+        glyphs: [
+          "\U000F0769",  # mdi:ceiling-light
+          "\U000F18DD",  # mdi:ceiling-light-multiple
+          "\U000F179B",  # mdi:light-recessed
+          "\U000F141E",  # mdi:dome-light
+          "\U000F1054",  # mdi:outdoor-lamp
+          "\U000F1356"  # mdi:television-ambient-light
+          ]   
+  - file: "fonts/Roboto-Bold.woff"
+    id: regular_40
+    size: 40
+    bpp: 4
+    glyphs: ${allowed_characters}     
+    extras:
+      - file: 'fonts/materialdesignicons-webfont.ttf' # http://materialdesignicons.com/cdn/7.4.47/ 
+        glyphs: [
+          "\U000F040A", # mdi:play
+          "\U000F03E4",  # mdi:pause
+          "\U000F04DB",  # mdi:stop
+          "\U000F057E",  # mdi:volume-high
+          "\U000F0581",  # mdi:volume-off
+          "\U000F0143",  # mdi:chevron-up
+          "\U000F0140",  # mdi:chevron-down
+          "\U000F1A2E",  # mdi:blinds-vertical-closed
+          "\U000F1A2D",  # mdi:blinds-vertical        
+          "\U000F084E",  # mdi:arrow-expand-horizontal
+          "\U000F084C"   # mdi:arrow-collapse-horizontal
+          ]   
+  - file: "fonts/Roboto-Regular.woff"
+    id: weather_60
+    size: 60
+    bpp: 4
+    glyphs: ${weather_characters}
+  - file: "fonts/Roboto-Regular.woff"
+    id: weather_40
+    size: 35
+    bpp: 4    
+    glyphs: ${weather_characters}
+  - file: "fonts/Roboto-Regular.woff"
+    id: weather_30
+    size: 30
+    bpp: 4
+    glyphs: ${weather_characters}
+
+  - file: "fonts/Roboto-Regular.woff"
+    id: weather_20
+    size: 23
+    bpp: 4
+    glyphs: ${weather_characters}
+    extras:
+      - file: 'fonts/materialdesignicons-webfont.ttf' # http://materialdesignicons.com/cdn/7.4.47/ 
+        glyphs: [          
+          "\U000F0143", # mdi:chevron-up
+          "\U000F0140", # mdi:chevron-down
+          "\U000F059C", # mdi:weather-sunset-up
+          "\U000F059B", # mdi:weather-sunset-down
+          "\U000F054A", # mdi:umbrella
+          "\U000F17FF", # mdi:sun-wireless-outline
+          "\U000F0C16", # mdi:alpha-o-circle
+          "\U000F00B5", # mdi:blur
+          "\U000F00B6" # mdi:blur-linear          
+          ]  
+
+  - file: "fonts/Roboto-Regular.woff"
+    id: title_font
+    size: 18
+    bpp: 4
+    glyphs: ${title_characters}
+    extras:
+      - file: 'fonts/materialdesignicons-webfont.ttf' # http://materialdesignicons.com/cdn/7.4.47/ 
+        glyphs: [
+          "\U000F05A9", # mdi:wifi
+          "\U000F16C5", # mdi:wifi-remove
+          "\U000F1A73", # mdi:solar-power-variant
+          "\U000F192C"  # mdi:transmission-tower-export
+          ]  
+  - file: "fonts/materialdesignicons-webfont.ttf"
+    id: icon_font_90
+    size: 90
+    bpp: 4
+    glyphs: [
+          "\U000F0595", # mdi:weather-partly-cloudy
+          "\U000F0335", # mdi:lightbulb
+          "\U000F0F54", # mdi:home-thermometer
+          "\U000F0439", # mdi:radio
+          "\U000F1A2D", # mdi:blinds-vertical
+          "\U000F07AE", # mdi:cctv
+          "\U000F1A57", # mdi:meter-electric
+          "\U000F081C", # mdi:door-open
+          "\U000F081B", # mdi:door-closed
+          "\U000F11DB", # mdi:window-closed-variant
+          "\U000F11DC", # mdi:window-open-variant
+          "\U000F0493", # mdi:cog
+          "\U000F0425", # mdi:power
+          "\U000F18F2", # mdi:mdi:refresh-auto
+          "\U000F0C11", # mdi:alpha-m-circle-outline
+          "\U000F04B2"  # mdi:sleep
+          ]  
+  
+
+switch:
+      
+# 홈어시스턴트 조명
+  - platform: homeassistant
+    entity_id: $light_switch_2
+    name: light_switch_2
+    id: light_switch_2
+    on_turn_on:
+      then:
+        - lvgl.widget.update:
+            id: light_switch_button_2
+            state:
+              checked: true
+        - lvgl.widget.update:
+            id: light_switch2_button_checked
+            state:
+              checked: true
+
+    on_turn_off:
+      then:
+        - lvgl.widget.update:
+            id: light_switch_button_2
+            state:
+              checked: false
+        - lvgl.widget.update:
+            id: light_switch2_button_checked
+            state:
+              checked: false  
+
+text_sensor:
+  - platform: version
+    name: "${name} Esphome Version"
+  - platform: wifi_info
+    ip_address:
+     name: ESP IP Address
+    mac_address:
+      name: ESP Mac Wifi Address
+
+  - platform: sun
+    name: Sun Rise
+    id: sun_rise
+    type: sunrise
+    internal: True
+    on_value:
+      - lvgl.label.update:
+          id: home_weather_sunrise
+          text: 
+            format: "#FFA500 \U000F059C# %s"
+            args: [ x.c_str() ]
+            
+  - platform: sun
+    name: Sun set
+    id: sun_set
+    type: sunset
+    internal: True
+    on_value:
+      - lvgl.label.update:
+          id: home_weather_sunset
+          text: 
+            format: "%s #FF0000 \U000F059C#"
+            args: [ x.c_str() ]
+
+#네이버 날씨
+  - platform: homeassistant
+    entity_id: weather.naver_weather_1
+    name: naver weather 
+    id: naver_weather_1
+    on_value:
+      - if:
+          condition:
+            or:
+              - lambda: 'return id(naver_weather_1).state == "sunny";'
+              - lambda: 'return id(naver_weather_1).state == "clear";'
+          then:
+            - lvgl.image.update:
+                id: home_weather_icon
+                src: sunny
+      - if:
+          condition:
+            or:
+              - lambda: 'return id(naver_weather_1).state == "clear-night";'
+              - lambda: 'return id(naver_weather_1).state == "night";'
+          then:
+            - lvgl.image.update:
+                id: home_weather_icon
+                src: clearnight
+      - if:
+          condition:
+            - lambda: 'return id(naver_weather_1).state == "partlycloudy";'
+          then:
+            - lvgl.image.update:
+                id: home_weather_icon
+                src: partlycloud
+      - if:
+          condition:
+            and:              
+              - lambda: 'return id(naver_weather_1).state == "partlycloudy";'
+              - sun.is_below_horizon:
+          then:
+            - lvgl.image.update:
+                id: home_weather_icon
+                src: nightpartlycloud
+      - if:
+          condition:            
+            - lambda: 'return id(naver_weather_1).state == "cloudy";'
+            - sun.is_below_horizon:
+          then:
+            - lvgl.image.update:
+                id: home_weather_icon
+                src: scloud
+      - if:
+          condition:            
+            and:              
+              - lambda: 'return id(naver_weather_1).state == "cloudy";'
+          then:
+            - lvgl.image.update:
+                id: home_weather_icon
+                src: cloudy
+      - if:
+          condition:
+            - lambda: 'return id(naver_weather_1).state == "rainy";'
+          then:
+            - lvgl.image.update:
+                id: home_weather_icon
+                src: rainy
+      - if:
+          condition:
+            - lambda: 'return id(naver_weather_1).state == "pouring";'
+          then:
+            - lvgl.image.update:
+                id: home_weather_icon
+                src: pouring 
+      - if:
+          condition:
+            - lambda: 'return id(naver_weather_1).state == "hail";'
+          then:
+            - lvgl.image.update:
+                id: home_weather_icon
+                src: hail   
+      - if:
+          condition:
+            - lambda: 'return id(naver_weather_1).state == "snowy";'
+          then:
+            - lvgl.image.update:
+                id: home_weather_icon
+                src: snowy
+      - if:
+          condition:
+            - lambda: 'return id(naver_weather_1).state == "windy";'
+          then:
+            - lvgl.image.update:
+                id: home_weather_icon
+                src: windy
+      - if:
+          condition:
+            or:
+              - lambda: 'return id(naver_weather_1).state == "lightning";'
+              - lambda: 'return id(naver_weather_1).state == "lightning-rainy";'
+              - lambda: 'return id(naver_weather_1).state == "thender";'
+          then:
+            - lvgl.image.update:
+                id: home_weather_icon
+                src: lightning
+
+      
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_nowweather_1
+    name: naver weather nowweather
+    id: naver_weather_nowweather_1
+    on_value: 
+      then:
+        - lvgl.label.update:
+            id: home_weather_text
+            text: 
+              format: "%s"
+              args: [ x.c_str() ]
+
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_windbearing_1
+    name: naver weather windbearing
+    id: naver_weather_windbearing_1
+    on_value:
+      - lvgl.label.update:
+          id: home_weather_hum
+          text: 
+            format: "#47ACF5 습도# %.0f%% #02D109 %s풍# %.1f m/s"
+            args: [ 'id(naver_weather_humidity_1).state' , x.c_str(),'id(naver_weather_windspeed_1).state']    
+
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_rainystarttmr_1
+    name: naver weather rainystarttmr
+    id: naver_weather_rainystarttmr_1
+    on_value:          
+      - if: 
+          condition:
+            - lambda: 'return id(naver_weather_rainystarttmr_1).state != "비안옴";'
+          then:
+            - lvgl.widget.show: home_weather_rainystarttmr
+            - lvgl.label.update:
+                id: home_weather_rainystarttmr
+                text: 
+                  format: "\U000F054A %s 비 내림 (%smm)"
+                  args: [ x.c_str(), id(naver_weather_rainfall_1).state.c_str() ]
+          else:
+            - lvgl.widget.hide: home_weather_rainystarttmr
+
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_rainfall_1
+    name: naver weather rainfall
+    id: naver_weather_rainfall_1
+
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_finedustgrade_1
+    name: naver_weather_finedustgrade_1
+    id: naver_weather_finedustgrade_1
+    on_value:
+      - lvgl.label.update:
+          id: home_weather_pm10
+          text: !lambda |-
+            static char buf[15];
+            std::string x_str = (id(naver_weather_finedustgrade_1).state);
+            snprintf(buf, sizeof(buf), "%s", x_str.c_str());
+            if (x_str == "좋음") {
+              lv_obj_set_style_text_color(id(home_weather_pm10), lv_color_hex(0x005AC7), LV_STATE_DEFAULT); // 딥블루
+            } else if (x_str == "보통") {
+              lv_obj_set_style_text_color(id(home_weather_pm10), lv_color_hex(0x00FF00), LV_STATE_DEFAULT); // 녹색
+            } else if (x_str == "나쁨") {
+              lv_obj_set_style_text_color(id(home_weather_pm10), lv_color_hex(0xFFA500), LV_STATE_DEFAULT); // 오렌지색
+            } else if (x_str == "매우나쁨") {
+              lv_obj_set_style_text_color(id(home_weather_pm10), lv_color_hex(0xFF0000), LV_STATE_DEFAULT); // 레드
+            }
+            return buf;
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_ultrafinedustgrade_1
+    name: naver_weather_ultrafinedustgrade_1
+    id: naver_weather_ultrafinedustgrade_1   
+    on_value:
+      - lvgl.label.update:
+          id: home_weather_pm25
+          text: !lambda |-
+            static char buf[15];
+            std::string x_str = (id(naver_weather_ultrafinedustgrade_1).state);
+            snprintf(buf, sizeof(buf), "%s", x_str.c_str());
+            if (x_str == "좋음") {
+              lv_obj_set_style_text_color(id(home_weather_pm25), lv_color_hex(0x005AC7), LV_STATE_DEFAULT); // 딥블루
+            } else if (x_str == "보통") {
+              lv_obj_set_style_text_color(id(home_weather_pm25), lv_color_hex(0x00FF00), LV_STATE_DEFAULT); // 녹색
+            } else if (x_str == "나쁨") {
+              lv_obj_set_style_text_color(id(home_weather_pm25), lv_color_hex(0xFFA500), LV_STATE_DEFAULT); // 오렌지색
+            } else if (x_str == "매우나쁨") {
+              lv_obj_set_style_text_color(id(home_weather_pm25), lv_color_hex(0xFF0000), LV_STATE_DEFAULT); // 레드
+            }
+            return buf;            
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_ozongrade_1
+    name: naver weather ozongrade
+    id: naver_weather_ozongrade_1    
+    on_value:
+      - lvgl.label.update:
+          id: home_weather_ozongrade
+          text: !lambda |-
+            static char buf[15];
+            std::string x_str = (id(naver_weather_ozongrade_1).state);
+            snprintf(buf, sizeof(buf), "%s", x_str.c_str());
+            if (x_str == "좋음") {
+              lv_obj_set_style_text_color(id(home_weather_ozongrade), lv_color_hex(0x005AC7), LV_STATE_DEFAULT); // 딥블루
+            } else if (x_str == "보통") {
+              lv_obj_set_style_text_color(id(home_weather_ozongrade), lv_color_hex(0x00FF00), LV_STATE_DEFAULT); // 녹색
+            } else if (x_str == "나쁨") {
+              lv_obj_set_style_text_color(id(home_weather_ozongrade), lv_color_hex(0xFFA500), LV_STATE_DEFAULT); // 오렌지색
+            } else if (x_str == "매우나쁨") {
+              lv_obj_set_style_text_color(id(home_weather_ozongrade), lv_color_hex(0xFF0000), LV_STATE_DEFAULT); // 레드
+            }
+            return buf;
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_todayuvgrade_1
+    name: naver weather todayuvgrade
+    id: naver_weather_todayuvgrade_1   
+    on_value:
+      - lvgl.label.update:
+          id: home_weather_todayuvgrade
+          text: !lambda |-
+            static char buf[15];
+            std::string x_str = (id(naver_weather_todayuvgrade_1).state);
+            snprintf(buf, sizeof(buf), "%s", x_str.c_str());
+            if (x_str == "좋음") {
+              lv_obj_set_style_text_color(id(home_weather_todayuvgrade), lv_color_hex(0x005AC7), LV_STATE_DEFAULT); // 딥블루
+            } else if (x_str == "보통") {
+              lv_obj_set_style_text_color(id(home_weather_todayuvgrade), lv_color_hex(0x00FF00), LV_STATE_DEFAULT); // 녹색
+            } else if (x_str == "높음") {
+              lv_obj_set_style_text_color(id(home_weather_todayuvgrade), lv_color_hex(0xFFA500), LV_STATE_DEFAULT); // 오렌지색
+            } else if (x_str == "매우높음") {
+              lv_obj_set_style_text_color(id(home_weather_todayuvgrade), lv_color_hex(0xFF0000), LV_STATE_DEFAULT); // 레드
+            }
+            return buf;
+#실외 센서                  
+     
+# 에어컨 텍스트 센서
+  - platform: homeassistant
+    entity_id: $aircon_id
+    name: aircon_mode
+    id: aircon_mode
+    on_value:      
+      - lvgl.label.update: 
+          id: aircon_mode_text
+          text:
+            format: "%s"
+            args: [ x.c_str() ]
+      - if:
+          condition:
+            lambda: 'return id(aircon_mode).state == "heat_cool";'
+          then:
+            - lvgl.dropdown.update:
+                id: aircon_mode_set
+                selected_index: 0
+            - lvgl.label.update: 
+                id: aircon_mode_text
+                text: "자동"
+                  
+      - if:
+          condition:
+            lambda: 'return id(aircon_mode).state == "heat";'
+          then:
+            - lvgl.dropdown.update:
+                id: aircon_mode_set
+                selected_index: 1
+            - lvgl.label.update: 
+                id: aircon_mode_text
+                text: "난방"    
+      - if:
+          condition:
+            lambda: 'return id(aircon_mode).state == "cool";'
+          then:
+            - lvgl.dropdown.update:
+                id: aircon_mode_set
+                selected_index: 2
+            - lvgl.label.update: 
+                id: aircon_mode_text
+                text: "냉방"
+      - if:
+          condition:
+            lambda: 'return id(aircon_mode).state == "dry";'
+          then:
+            - lvgl.dropdown.update:
+                id: aircon_mode_set
+                selected_index: 3
+            - lvgl.label.update: 
+                id: aircon_mode_text
+                text: "제습"
+      - if:
+          condition:
+            lambda: 'return id(aircon_mode).state == "fan_only";'
+          then:
+            - lvgl.dropdown.update:
+                id: aircon_mode_set
+                selected_index: 4
+            - lvgl.label.update: 
+                id: aircon_mode_text
+                text: "송풍"
+            
+      - if:
+          condition:
+            lambda: 'return id(aircon_mode).state == "off";'
+          then:
+            - lvgl.dropdown.update:
+                id: aircon_mode_set
+                selected_index: 5  
+            - lvgl.label.update: 
+                id: aircon_mode_text
+                text: "꺼짐" 
+      - script.execute: light_up
+      - if:
+          condition:
+            lvgl.is_idle: 
+              timeout: 30s
+          then:
+            - lvgl.page.show: climate_page
+
+  - platform: homeassistant
+    entity_id: $aircon_id
+    attribute: fan_mode
+    name: aircon_fan_mode
+    id: aircon_fan_mode
+    on_value:
+      - if:
+          condition:
+            lambda: 'return id(aircon_fan_mode).state == "diffuse";'
+          then:
+            - lvgl.dropdown.update:
+                id: aircon_fan_mode_Set
+                selected_index: 1
+            
+      - if:
+          condition:
+            lambda: 'return id(aircon_fan_mode).state == "high";'
+          then:
+            - lvgl.dropdown.update:
+                id: aircon_fan_mode_Set
+                selected_index: 2
+      - if:
+          condition:
+            lambda: 'return id(aircon_fan_mode).state == "medium";'
+          then:
+            - lvgl.dropdown.update:
+                id: aircon_fan_mode_Set
+                selected_index: 3
+      - if:
+          condition:
+            lambda: 'return id(aircon_fan_mode).state == "low";'
+          then:
+            - lvgl.dropdown.update:
+                id: aircon_fan_mode_Set
+                selected_index: 4
+      - if:
+          condition:
+            lvgl.is_idle: 
+              timeout: 30s
+          then:
+            - script.execute: light_up
+            - lvgl.page.show: climate_page
+
+# 가습기 텍스트 센서
+
+# 공기청정기 텍스트 센서
+ 
+# 블라인드 텍스트 센서
+ 
+            
+binary_sensor:
+  - platform: status
+    name: "${name} Connection Status"
+  
+# 거실 감지
+
+#창문 센서
+                        
+#도어센서
+
+#실외 센서
+
+#미디어 센서
+
+button:    
+  - platform: restart
+    name: "${name} Restart"
+    id: re_start
+    entity_category: diagnostic
+
+
+sensor:
+   # 와이파이 신호 세기
+  - platform: wifi_signal # Reports the WiFi signal strength/RSSI in dB
+    name: "WiFi Signal dB"
+    id: wifi_signal_db
+    internal: true
+    entity_category: "diagnostic"
+
+  - platform: copy # Reports the WiFi signal strength in %
+    source_id: wifi_signal_db
+    name: "${name} WiFi Signal Percent"
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "Signal %"
+    entity_category: "diagnostic"
+    device_class: ""
+    icon: mdi:wifi
+
+#HA Sensors
+# Naver Weather
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_todaymintemp_1
+    name: naver weather todaymintemp
+    id: naver_weather_todaymintemp_1
+    accuracy_decimals: 1
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_todaymaxtemp_1
+    name: naver weather todaymaxtemp
+    id: naver_weather_todaymaxtemp_1
+    accuracy_decimals: 1
+    on_value:
+      - lvgl.label.update:
+          id: home_weather_minmax
+          text: 
+            format: "#47ACF5 %.1f°#|#FF0000 %.1f°#"
+            args: [ 'id(naver_weather_todaymintemp_1).state', 'x' ]
+
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_nowtemp_1
+    name: naver weather nowtemp
+    id: naver_weather_nowtemp_1
+    accuracy_decimals: 1
+    
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_humidity_1
+    name: naver weather humidity
+    id: naver_weather_humidity_1    
+    on_value:
+      - lvgl.label.update:
+          id: home_weather_hum
+          text: 
+            format: "#47ACF5 습도# %.0f%% #02D109 %s풍# %.1f m/s"
+            args: [ 'x', 'id(naver_weather_windbearing_1).state.c_str()', 'id(naver_weather_windspeed_1).state']
+
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_todayfeeltemp_1
+    name: naver weather todayfeeltemp
+    id: naver_weather_todayfeeltemp_1
+    on_value:
+      - lvgl.label.update:
+          id: home_weather_now
+          text:
+            format: "%.1f°"
+            args: [ 'x' ]
+    
+  - platform: homeassistant
+    entity_id: sensor.naver_weather_windspeed_1
+    name: naver weather windspeed
+    id: naver_weather_windspeed_1
+    on_value:
+      - lvgl.label.update:
+          id: home_weather_hum
+          text: 
+            format: "#47ACF5 습도# %.0f%% #02D109 %s풍# %.1f m/s"
+            args: [ 'id(naver_weather_humidity_1).state' , 'id(naver_weather_windbearing_1).state.c_str()', 'x']
+
+#실내 센서
+  - platform: homeassistant
+    entity_id: $indoor_temp
+    name: indoor_temperature
+    id: indoor_temperature
+    on_value:
+      - lvgl.indicator.update:
+          id: temp_needle
+          value: !lambda return x * 10;
+      - lvgl.label.update:
+          id: temp_in_text
+          text:
+            format: "%.1f°"
+            args: [ 'x' ]
+
+  - platform: homeassistant
+    entity_id: $indoor_hum
+    name: indoor_humidity
+    id: indoor__humidity
+    on_value:
+      - lvgl.indicator.update:
+          id: hum_needle
+          value: !lambda return x;
+      - lvgl.label.update:
+          id: hum_in_text
+          text:
+            format: " %.0f%%"
+            args: [ 'x' ]
+
+#실외 센서
+ 
+# HA Energy Sensor
+
+#에어컨 센서
+  - platform: homeassistant
+    entity_id: $aircon_id
+    name: aircon now temp
+    attribute: current_temperature
+    id: aircon_now_temp
+    accuracy_decimals: 1
+    on_value:
+      - lvgl.label.update:
+          id: aircon_now_temp_text
+          text:
+            format: "현재 온도 %.1f°c"
+            args: [ 'x' ]
+
+  - platform: homeassistant
+    entity_id: $aircon_id
+    name: aircon set temp
+    attribute: temperature
+    id: aircon_set_temp
+    accuracy_decimals: 0
+    on_value:
+      - lvgl.arc.update:
+          id: aircon_set_temp_arc
+          value: !lambda 'return x;'
+      - lvgl.label.update:
+          id: aircon_set_temp_text
+          text:
+            format: "%.0f°c"
+            args: [ 'x' ]
+      - if:
+          condition:
+            lvgl.is_idle: 
+              timeout: 30s
+          then:
+            - script.execute: light_up
+            - lvgl.page.show: climate_page
+                         
+# 가습기센서
+                             
+# 공기청정기 센서
+
+# 블라인드 센서
+            
+#미디어 센서
+ 
+
+lvgl:
+  displays: 
+    - my_display
+  touchscreens:
+    - my_touchscreen
+  log_level: INFO
+
+# 대기중 자동화
+  on_idle:
+    - timeout: !lambda return id(return_timeout).state * 1000;
+      then:
+        if: 
+          condition:
+            - light.is_on: backlight
+          then:
+            - lvgl.page.show: home_page
+
+    - timeout: !lambda return id(screen_timeout).state * 1000;
+      then:
+        if: 
+          condition:
+            - light.is_on: backlight
+          then:
+            - light.turn_off: backlight
+
+# 기본 스타일  
+  bg_color: 0
+  text_font: regular_20
+# 전체 위젯 테마  
+  theme:
+    slider:
+      border_width: 1
+      border_opa: 15%
+      bg_color: 0xcccaca
+      bg_opa: 15%
+      pad_all: 8
+      indicator:
+        bg_color: 0x003866
+        bg_grad_color: 0x4adeff
+        bg_grad_dir: HOR
+        bg_opa: COVER
+        height: 30
+      knob:
+        bg_color: 0x4adeff  #2F8CD8
+        #bg_grad_color: 0x005782
+        #bg_grad_dir: VER
+        bg_opa: COVER
+        width: 35
+        border_color: 0x0077b3        
+        border_width: 0
+        outline_width: 0
+    arc:
+      bg_color: 0
+      bg_opa: TRANSP
+      arc_color: 0x111111
+      arc_opa: COVER
+      arc_width: 30
+      indicator:
+        bg_color: 0x2F8CD8
+        bg_opa: COVER        
+        arc_width: 30
+      knob:
+        bg_color: 0x4adeff
+        bg_opa: COVER
+        border_color: 0x2F8CD8
+        border_width: 0
+        outline_width: 0
+  
+# 개별 스타일 사전정의
+  style_definitions:
+    - id: title_bar
+      text_font: title_font
+      text_color: 0xD5D5D5
+      bg_color: 0
+      bg_opa: TRANSP
+      border_opa: TRANSP
+      radius: 0
+      pad_all: 0
+      shadow_opa: TRANSP
+      width: 100%
+    - id: home_style
+      text_color: 0xD5D5D5
+      bg_opa: TRANSP
+      radius: 5
+      border_color: 0xE9E9E9
+      border_width: 0
+      #border_opa:
+      pad_all: 0
+      shadow_width: 0
+      shadow_opa: TRANSP
+    - id: card
+      text_color: 0xD5D5D5
+      bg_color: 0x222222
+      bg_opa: COVER
+      radius: 20
+      outline_width: 0
+      border_width: 0
+      #border_opa:
+      pad_all: 0
+    - id: weather_style
+      text_color: 0xD5D5D5
+      bg_color: 0
+      bg_opa: TRANSP
+      outline_width: 0
+      border_width: 0
+      #border_opa:
+      radius: 0
+      pad_all: 0
+    - id: button_light
+      bg_color: 0xCCCCCC
+      bg_grad_color: 0xFFFFFF
+      bg_grad_dir: HOR
+      border_width: 8
+      border_color: 0x222222
+      border_opa: 50%
+      outline_width: 1
+    - id: button_light_check
+      bg_color: 0xFFFFFF
+      text_color: 0x2F8CD8
+      border_color: 0x2F8CD8
+      border_width: 5      
+    - id: button_menu
+      radius: 40      
+      text_font: regular_25
+      text_align: CENTER
+      bg_color: 0x2F8CD8
+      bg_grad_color: 0x0460BD
+      bg_grad_dir: VER
+    - id: tab_theme
+      border_width: 0
+      border_color: 0x0077b3
+      border_opa: TRANSP
+      bg_color: 0x2F8CD8
+      bg_grad_color: 0x005782                  
+      bg_grad_dir: VER
+      pad_all: 0                  
+      width: 100%
+      height: 50
+      text_font: regular_25
+      text_align: CENTER
+
+# 상단 타이틀
+  top_layer:
+    widgets: 
+      - obj:
+          x: 0
+          y: 0
+          width: 480
+          height: 30
+          styles : title_bar
+          widgets:
+            - label:
+                text: "오전 00:00"
+                id: title_time
+                align: TOP_LEFT
+                x: 0
+                y: 2
+                text_align: left
+            - label:
+                text: "2000-00-00(일)"
+                id: title_date
+                align: TOP_MID
+                x: 0
+                y: 2
+                text_align: CENTER                
+
+            - label:
+                text: "\U000F05A9"
+                id: wifi_connected
+                hidden: true
+                align: TOP_RIGHT               
+                x: 0
+                y: 2
+                text_align: right
+            - label:
+                text: "\U000F16C5"
+                id: wifi_disconnected                
+                align: TOP_RIGHT
+                x: -2
+                y: 2
+                text_align: right
+
+  pages:
+# Menu Page
+    - id: menu_page
+      widgets:
+      - obj:
+          x: 0
+          y: 30
+          align: TOP_LEFT
+          styles: card
+          width: 480
+          height: 450
+          radius: 20
+          widgets:            
+            - button:
+                align: TOP_LEFT
+                x: 30
+                y: 20
+                height: 190
+                width: 190
+                styles: button_menu
+                outline_width: 1
+                on_press:
+                  then:
+                    - lvgl.page.show: home_page
+                widgets:
+                  - label:
+                      y: 5
+                      align: TOP_MID
+                      text: "\U000F0595"    
+                      text_font: icon_font_90                           
+                  - label:
+                      y: -5
+                      align: BOTTOM_MID
+                      text: "날 씨"
+                      text_font: regular_25                      
+            - button:
+                align: TOP_RIGHT
+                x: -30
+                y: 20
+                height: 190
+                width: 190
+                styles: button_menu
+                outline_width: 1
+                on_press:
+                  then:
+                    - lvgl.page.show: light_page
+                widgets:
+                  - label:
+                      y: 5
+                      align: TOP_MID
+                      text: "\U000F0335"    
+                      text_font: icon_font_90                           
+                  - label:
+                      y: -5
+                      align: BOTTOM_MID
+                      text: "조 명"
+                      text_font: regular_25
+
+            - button:
+                x: 30
+                y: -20
+                height: 190
+                width: 190
+                align: BOTTOM_LEFT
+                styles: button_menu
+                outline_width: 1
+                on_press:
+                  then:
+                    - lvgl.page.show: climate_page
+                widgets:
+                  - label:
+                      y: 5
+                      align: TOP_MID                               
+                      text: "\U000F0F54"
+                      text_font: icon_font_90
+                  - label:
+                      y: -5
+                      align: BOTTOM_MID                                
+                      text: "에어컨"  
+                      text_font: regular_25                      
+                                
+            - button:
+                x: -30
+                y: -20
+                height: 190
+                width: 190
+                align: BOTTOM_RIGHT
+                styles: button_menu
+                outline_width: 1
+                on_press:
+                  then:
+                    - lvgl.page.show: setting_page
+                widgets:
+                  - label:
+                      y: 5
+                      align: TOP_MID                               
+                      text: "\U000F0493"
+                      text_font: icon_font_90
+                  - label:
+                      y: -5
+                      align: BOTTOM_MID                                
+                      text: "설 정"  
+                      text_font: regular_25
+                                
+    - id: home_page
+      widgets:
+      - obj:
+          x: 0
+          y: 30
+          align: TOP_LEFT
+          styles: home_style
+          width: 480
+          height: 450
+          widgets:
+            - obj:
+                x: 0
+                y: 0
+                width: 480
+                height: 250
+                styles: card
+                widgets:
+                  - obj:
+                      x: 0
+                      y: 0
+                      width: 200
+                      height: 150
+                      align: TOP_LEFT
+                      styles: weather_style
+                      widgets:
+                        - image:
+                            x: -10
+                            y: 0
+                            align: TOP_MID
+                            bg_opa: TRANSP
+                            id: home_weather_icon
+                            src: partlycloud
+                            antialias: true
+                            zoom: 1.2
+
+                  - obj:
+                      x: 0
+                      y: 0
+                      align: TOP_RIGHT
+                      width: 280
+                      height: 150
+                      styles: weather_style
+                      widgets:
+                        - label:
+                            text: "대체로흐림"
+                            x: 0
+                            y: 10
+                            align: TOP_LEFT
+                            id: home_weather_text
+                            text_font: weather_30
+                            text_align: CENTER
+                            text_color: 0xF5F5F5
+                        - label:
+                            text: "--.-°"
+                            x: 0
+                            y: 5
+                            align: TOP_RIGHT
+                            id: home_weather_now
+                            text_align: CENTER
+                            text_font: weather_60
+                            text_color: 0xF5F5F5
+                        - label:
+                            text: "--.-°|--.-°"
+                            x: 0
+                            y: -10
+                            align: LEFT_MID
+                            id: home_weather_minmax
+                            recolor: true
+                            text_align: CENTER
+                            text_font: weather_20
+                            text_color: 0xA0A0A0
+                        - label:
+                            text: "습도 --% --풍 -.- m/s"
+                            x: 0
+                            y: 20
+                            align: LEFT_MID
+                            id: home_weather_hum
+                            recolor: true
+                            text_align: CENTER
+                            text_font: weather_20
+                            text_color: 0xA0A0A0
+                        - label:
+                            x: 0
+                            y: -5
+                            align: BOTTOM_LEFT
+                            text: "\U000F054A --시 비 내림(--.-mm)"
+                            id: home_weather_rainystarttmr
+                            hidden: true
+                            text_align: CENTER
+                            text_font: weather_20
+                            text_color: 0xFFA500
+                  - obj:
+                      x: 0
+                      y: 0
+                      align: BOTTOM_LEFT
+                      width: 480
+                      height: 100
+                      styles: weather_style                      
+                      widgets:        
+                        - label:
+                            text: "\U000F00B5 미세먼지"
+                            x: 20
+                            y: 5
+                            align: TOP_LEFT
+                            #id: home_weather_pm10
+                            text_align: CENTER
+                            text_font: weather_20
+                            text_color: 0xE5E5E5
+                        - label:
+                            text: "아주나쁨"
+                            x: 140
+                            y: 5
+                            align: TOP_LEFT
+                            id: home_weather_pm10
+                            text_align: LEFT
+                            text_font: weather_20
+                            text_color: 0xE5E5E5
+                        - label:
+                            text: "자외선 \U000F17FF"
+                            x: -20
+                            y: 5
+                            align: TOP_RIGHT
+                            #id: home_weather_pm10
+                            text_align: RIGHT
+                            text_font: weather_20
+                            text_color: 0xE5E5E5
+                        - label:
+                            text: "매우높음"
+                            x: -120
+                            y: 5
+                            align: TOP_RIGHT
+                            id: home_weather_todayuvgrade
+                            text_align: RIGHT
+                            text_font: weather_20
+                            text_color: 0xE5E5E5
+                        - label:
+                            text: "\U000F00B6 초미세먼지"
+                            x: 20
+                            y: 0
+                            align: LEFT_MID
+                            #id: home_weather_pm25
+                            text_align: CENTER
+                            text_font: weather_20
+                            text_color: 0xE5E5E5
+                        - label:
+                            text: "매우나쁨"
+                            x: 165
+                            y: 0
+                            align: LEFT_MID
+                            id: home_weather_pm25
+                            text_align: LEFT
+                            text_font: weather_20
+                            text_color: 0xE5E5E5
+                        - label:
+                            text: "오존 \U000F0C16"
+                            x: -20
+                            y: 0
+                            align: RIGHT_MID
+                            #id: home_weather_pm10
+                            text_align: RIGHT
+                            text_font: weather_20
+                            text_color: 0xE5E5E5
+                        - label:
+                            text: "매우나쁨"
+                            x: -100
+                            y: 0
+                            align: RIGHT_MID
+                            id: home_weather_ozongrade
+                            text_align: RIGHT
+                            text_font: weather_20
+                            text_color: 0xE5E5E5
+                        - label:
+                            text: "\U000F059C --:--:--"
+                            x: 20
+                            y: -5
+                            align: BOTTOM_LEFT
+                            id: home_weather_sunrise                      
+                            text_align: LEFT
+                            recolor: true
+                            text_font: weather_20
+                            text_color: 0xE5E5E5
+                        - label:
+                            text: "--:--:-- \U000F059B"
+                            x: -20
+                            y: -5
+                            align: BOTTOM_RIGHT
+                            id: home_weather_sunset
+                            recolor: true
+                            text_align: RIGHT
+                            text_font: weather_20
+                            text_color: 0xE5E5E5
+
+      - obj:
+          x: 0
+          y: -5
+          align: BOTTOM_LEFT
+          width: 238
+          height: 190
+          styles: card
+          widgets:
+            - meter:
+                x: 0
+                y: 0
+                width: 170
+                height: 170
+                border_width: 0
+                bg_opa: TRANSP
+                align: CENTER
+                scales:
+                  - range_from: 0
+                    range_to: 400
+                    angle_range: 250
+                    ticks:
+                      count: 0
+                    indicators:
+                      - line:
+                          id: temp_needle
+                          width: 5
+                          color: 0xE5E5E5
+                          r_mod: 15
+                      - arc: 
+                          color: 0x005AC7
+                          r_mod: 15 
+                          width: 25
+                          start_value: 0
+                          end_value: 150
+                      - arc: 
+                          color: 0x0088C7
+                          r_mod: 15
+                          width: 25
+                          start_value: 151
+                          end_value: 221
+                      - arc: 
+                          color: 0x11C700
+                          r_mod: 15
+                          width: 25
+                          start_value: 221
+                          end_value: 270
+                      - arc: 
+                          color: 0xFF8C00
+                          r_mod: 15
+                          width: 25
+                          start_value: 271
+                          end_value: 330
+                      - arc: 
+                          color: 0xFF0000
+                          r_mod: 15
+                          width: 25
+                          start_value: 331
+                          end_value: 400
+            - obj:
+                height: 130
+                width: 130
+                radius: 73
+                align: CENTER
+                border_width: 0
+                bg_color: 0x222222
+                pad_all: 0
+            - label:
+                x: 0
+                y: 0
+                align: CENTER
+                text: "--.-°"
+                id: temp_in_text
+                text_font: weather_40
+                text_color: 0xE5E5E5
+                text_align: CENTER
+            - label:
+                x: 0
+                y: 70
+                align: CENTER
+                text: "실내 온도"
+                text_font: weather_20
+                text_color: 0xE5E5E5
+                text_align: CENTER
+      - obj:
+          x: 0
+          y: -5
+          align: BOTTOM_RIGHT
+          width: 238
+          height: 190          
+          styles: card
+          widgets:
+            - meter:
+                x: 0
+                y: 0
+                width: 170
+                height: 170
+                border_width: 0
+                bg_opa: TRANSP
+                align: CENTER
+                scales:
+                  - range_from: 0
+                    range_to: 100
+                    angle_range: 250
+                    ticks:
+                      count: 0
+                    indicators:
+                      - line:
+                          id: hum_needle
+                          width: 5
+                          color: 0xE5E5E5
+                          r_mod: 15 
+                      - arc: 
+                          color: 0xB3DEFC
+                          r_mod: 15 
+                          width: 25
+                          start_value: 0
+                          end_value: 25
+                      - arc: 
+                          color: 0x74C1F7
+                          r_mod: 15
+                          width: 25
+                          start_value: 26
+                          end_value: 45
+                      - arc: 
+                          color: 0x69C0FF
+                          r_mod: 15
+                          width: 25
+                          start_value: 46
+                          end_value: 65
+                      - arc: 
+                          color: 0x47ACF5
+                          r_mod: 15
+                          width: 25
+                          start_value: 66
+                          end_value: 85
+                      - arc: 
+                          color: 0x0095FF
+                          r_mod: 15
+                          width: 25
+                          start_value: 86
+                          end_value: 100
+            - obj:
+                height: 130
+                width: 130
+                radius: 73
+                align: CENTER
+                border_width: 0
+                bg_color: 0x222222                
+                pad_all: 0
+            - label:
+                x: 0
+                y: 0
+                align: CENTER
+                text: "--%"
+                id: hum_in_text
+                text_font: weather_40                                  
+                text_color: 0xE5E5E5
+                text_align: CENTER
+            - label:
+                x: 0
+                y: 70
+                align: CENTER
+                text: "실내 습도"
+                text_font: weather_20
+                text_color: 0xE5E5E5
+                text_align: CENTER  
+      - button:
+          x: 0
+          y: 30
+          align: TOP_LEFT
+          styles: home_style
+          id: home_button
+          width: 480
+          height: 450
+          on_press:
+            then:
+               - lvgl.page.show: menu_page
+               
+# Light Page
+    - id: light_page
+      widgets:
+      - obj:
+          x: 0
+          y: 30
+          align: TOP_LEFT
+          styles: card
+          width: 480
+          height: 450
+          widgets:            
+            - tabview:
+                id: device_tap
+                position: bottom
+                styles: card
+                tab_style:
+                  styles: tab_theme
+                  items:
+                    text_color: 0xE5E5E5
+                    text_font: regular_25
+                    height: 50                    
+                    pressed:
+                      text_color: 0xE5E5E5
+                    checked: 
+                      text_color: 0xE5E5E5
+                tabs:
+                  - name: "$light_1_room"
+                    id: Light1_tab
+                    widgets:
+                      - button:
+                          x: 5
+                          y: 5
+                          align: TOP_LEFT
+                          width: 50
+                          height: 50
+                          styles: card
+                          radius: 73
+                          outline_width: 1
+                          widgets:
+                            - label:
+                                align: CENTER
+                                text: "<"
+                                text_font: regular_20
+                          on_press:
+                            then:
+                              - lvgl.page.show: menu_page
+
+                      - label:
+                          x: -5
+                          y: 5
+                          align: TOP_RIGHT
+                          height: 50
+                          styles: home_style                          
+                          text: "${light_1_name}"
+                          text_font: regular_40
+
+                      - obj:
+                          y: -15
+                          align: BOTTOM_MID
+                          id: light_switch_button_1
+                          height: 280
+                          width: 200
+                          bg_color: 0xFFFFFF
+                          border_width: 5
+                          border_color: 0xAAAAAA
+                          border_opa: 50%
+                          outline_width: 1
+                          widgets:
+                            - button:
+                                height: 200
+                                width: 150
+                                align: CENTER
+                                radius: 10
+                                styles: button_light
+                                checkable: true
+                                checked:
+                                  bg_color: 0xFFFFFF
+                                  bg_grad_color: 0xCCCCCC
+                                  bg_grad_dir: HOR   
+                                on_click:
+                                  - light.toggle: light_switch_1
+                                widgets:
+                                  button:
+                                    x: -5
+                                    height: 15
+                                    width: 5
+                                    id: light_switch_button_checked
+                                    bg_color: 0xFF0000
+                                    align: RIGHT_MID
+                                    checkable: true
+                                    checked:
+                                      bg_color: 0x0000FF
+                  - name: "$light_2_room"
+                    id: Light2_tab
+                    widgets:
+                      - button:
+                          x: 5
+                          y: 5
+                          align: TOP_LEFT
+                          width: 50
+                          height: 50
+                          styles: card
+                          radius: 73
+                          outline_width: 1
+                          widgets:
+                            - label:
+                                align: CENTER
+                                text: "<"
+                                text_font: regular_20
+                          on_press:
+                            then:
+                              - lvgl.page.show: menu_page
+
+                      - label:
+                          x: -5
+                          y: 5
+                          align: TOP_RIGHT
+                          height: 50
+                          styles: home_style                          
+                          text: "${light_2_name}"
+                          text_font: regular_40
+
+                      - obj:
+                          y: -15
+                          align: BOTTOM_MID
+                          id: light_switch_button_2
+                          height: 280
+                          width: 200
+                          bg_color: 0xFFFFFF
+                          border_width: 5
+                          border_color: 0xAAAAAA
+                          border_opa: 50%
+                          outline_width: 1
+                          widgets:
+                            - button:
+                                height: 200
+                                width: 150
+                                align: CENTER
+                                radius: 10
+                                styles: button_light
+                                checkable: true
+                                checked:
+                                  bg_color: 0xFFFFFF
+                                  bg_grad_color: 0xCCCCCC
+                                  bg_grad_dir: HOR   
+                                on_click:
+                                  - homeassistant.action:
+                                      action: switch.toggle
+                                      data: 
+                                        entity_id: $light_switch_2
+                                widgets:
+                                  button:
+                                    x: -5
+                                    height: 15
+                                    width: 5
+                                    id: light_switch2_button_checked
+                                    bg_color: 0xFF0000
+                                    align: RIGHT_MID
+                                    checkable: true
+                                    checked:
+                                      bg_color: 0x0000FF                                      
+# Climate 페이지
+    - id: climate_page
+      widgets:
+      - obj:
+          x: 0
+          y: 30
+          align: TOP_LEFT
+          styles: card
+          width: 480
+          height: 450
+          widgets:
+            - button:
+                x: 20
+                y: 20
+                align: TOP_LEFT
+                width: 50
+                height: 50
+                styles: card
+                radius: 73
+                outline_width: 1
+                widgets:
+                  - label:
+                      align: CENTER
+                      text: "<"
+                      text_font: regular_20
+                on_press:
+                  then:
+                    - lvgl.page.show: menu_page
+            - label:
+                x: -20
+                y: 20
+                align: TOP_RIGHT
+                height: 50
+                styles: home_style
+                text: "에어컨"
+                text_font: regular_40
+                
+            - arc:
+                width: 330
+                height: 330
+                align: CENTER
+                adjustable: true
+                min_value: 18
+                max_value: 30
+                start_angle: 145
+                end_angle: 35
+                id: aircon_set_temp_arc
+                on_release:
+                  then:
+                    - homeassistant.action:
+                        action: climate.set_temperature
+                        data: 
+                          entity_id: $aircon_id
+                          temperature: !lambda 'return x;'
+                                    
+                widgets:
+                  - label:
+                      x: 0
+                      y: -80
+                      align: CENTER
+                      text: "냉방"
+                      id: aircon_mode_text
+                      text_font: regular_25
+                      text_color: 0xE5E5E5
+                      text_align: CENTER
+                  - label:
+                      x: 0
+                      y: -10
+                      align: CENTER
+                      text: "--.-°c"
+                      id: aircon_set_temp_text
+                      text_font: weather_60
+                      text_color: 0xE5E5E5
+                      text_align: CENTER
+                  - label:
+                      x: 0
+                      y: 50
+                      align: CENTER
+                      text: "설정 온도"
+                      text_font: regular_25
+                      text_color: 0xE5E5E5
+                      text_align: CENTER
+                  - button:
+                      x: -50
+                      y: 120
+                      width: 50
+                      height: 50
+                      align: CENTER
+                      bg_opa: TRANSP
+                      radius: 75
+                      outline_width: 1
+                      on_click:
+                        then:
+                          - homeassistant.action:
+                              action: climate.set_temperature
+                              data: 
+                                entity_id: $aircon_id
+                                temperature: !lambda 'return (id(aircon_set_temp).state) - 1 ;'
+                      widgets:
+                        - label:
+                            align: center
+                            text: "-"
+                            text_align: center
+                            text_font: weather_40
+                  - button:
+                      x: 50
+                      y: 120
+                      width: 50
+                      height: 50
+                      align: CENTER
+                      bg_opa: TRANSP
+                      radius: 75
+                      outline_width: 1
+                      on_click:
+                        then:
+                          - homeassistant.action:
+                              action: climate.set_temperature
+                              data: 
+                                entity_id: $aircon_id
+                                temperature: !lambda 'return (id(aircon_set_temp).state) + 1;'
+                              
+                      widgets:
+                        - label:
+                            align: center
+                            text: "+"
+                            text_align: center
+                            text_font: weather_40
+            - label:
+                x: 0
+                y: -20
+                align: BOTTOM_MID
+                text: "현재 온도 --.-°c"
+                id: aircon_now_temp_text
+                text_font: regular_25
+                text_color: 0xE5E5E5
+                text_align: CENTER
+            - obj:
+                styles: home_style
+                x: 10
+                y: -10
+                width: 100
+                height: 55
+                align: BOTTOM_LEFT
+                widgets:
+                  - dropdown:
+                      id: aircon_mode_set
+                      width: 100%                                
+                      dir: TOP                                
+                      align: CENTER
+                      text_font: regular_20
+                      options:
+                        - "자동"
+                        - "난방"
+                        - "냉방"
+                        - "제습"
+                        - "송풍"
+                        - "꺼짐"
+                      on_value:
+                        then:
+                          - if:
+                              condition:
+                                - lambda: 'return x == 0;'
+                              then:
+                                - homeassistant.action:
+                                    action: climate.set_hvac_mode
+                                    data: 
+                                      entity_id: $aircon_id
+                                      hvac_mode: 'heat_cool'
+                          - if:
+                              condition:
+                                - lambda: 'return x == 1;'
+                              then:
+                                - homeassistant.action:
+                                    action: climate.set_hvac_mode
+                                    data: 
+                                      entity_id: $aircon_id
+                                      hvac_mode: 'heat'
+                          - if:
+                              condition:
+                                - lambda: 'return x == 2;'
+                              then:
+                                - homeassistant.action:
+                                    action: climate.set_hvac_mode
+                                    data: 
+                                      entity_id: $aircon_id
+                                      hvac_mode: 'cool'
+                          - if:
+                              condition:
+                                - lambda: 'return x == 3;'
+                              then:
+                                - homeassistant.action:
+                                    action: climate.set_hvac_mode
+                                    data: 
+                                      entity_id: $aircon_id
+                                      hvac_mode: 'dry'
+                          - if:
+                              condition:
+                                - lambda: 'return x == 4;'
+                              then:
+                                - homeassistant.action:
+                                    action: climate.set_hvac_mode
+                                    data: 
+                                      entity_id: $aircon_id
+                                      hvac_mode: 'fan_only'
+                          - if:
+                              condition:
+                                - lambda: 'return x == 5;'
+                              then:
+                                - homeassistant.action:
+                                    action: climate.set_hvac_mode
+                                    data: 
+                                      entity_id: $aircon_id
+                                      hvac_mode: 'off'
+
+            - obj:
+                styles: home_style
+                x: -10
+                y: -10
+                width: 100
+                height: 55
+                align: BOTTOM_RIGHT
+                widgets:
+                  - dropdown:
+                      id: aircon_fan_mode_Set
+                      width: 100%                                 
+                      dir: TOP                                
+                      align: CENTER
+                      text_font: regular_20
+                      options:
+                        - "자동"
+                        - "강"
+                        - "중"
+                        - "약"
+                      on_value:
+                        then:
+                          - if:
+                              condition:
+                                - lambda: 'return x == 0;'
+                              then:
+                                - homeassistant.action:
+                                    action: climate.set_fan_mode
+                                    data: 
+                                      entity_id: $aircon_id
+                                      fan_mode: 'diffuse'
+                          - if:
+                              condition:
+                                - lambda: 'return x == 1;'
+                              then:
+                                - homeassistant.action:
+                                    action: climate.set_fan_mode
+                                    data: 
+                                      entity_id: $aircon_id
+                                      fan_mode: 'high'
+                          - if:
+                              condition:
+                                - lambda: 'return x == 2;'
+                              then:
+                                - homeassistant.action:
+                                    action: climate.set_fan_mode
+                                    data: 
+                                      entity_id: $aircon_id
+                                      fan_mode: 'medium'
+                          - if:
+                              condition:
+                                - lambda: 'return x == 3;'
+                              then:
+                                - homeassistant.action:
+                                    action: climate.set_fan_mode
+                                    data: 
+                                      entity_id: $aircon_id
+                                      fan_mode: 'low'
+#설정 페이지
+    - id: setting_page
+      widgets:
+      - obj:
+          x: 0
+          y: 30
+          align: TOP_LEFT
+          styles: home_style
+          width: 480
+          height: 450
+          radius: 20
+          widgets:
+            - tabview:
+                id: setting_tab
+                position: bottom
+                styles: card
+                radius: 20
+                tab_style:
+                  styles: tab_theme
+                  items:
+                    text_color: 0xE5E5E5
+                    height: 100%
+                    pressed:
+                      text_color: 0xE5E5E5
+                    checked: 
+                      text_color: 0xE5E5E5
+                tabs:
+                  - name: "설  정"
+                    id: setting
+                    widgets:
+                      - button:
+                          x: 5
+                          y: 5
+                          align: TOP_LEFT
+                          width: 50
+                          height: 50
+                          styles: card
+                          radius: 73
+                          outline_width: 1
+                          widgets:
+                            - label:
+                                align: CENTER
+                                text: "<"
+                                text_font: regular_20
+                          on_press:
+                            then:
+                              - lvgl.page.show: menu_page  
+                      - label:
+                          x: -5
+                          y: 5
+                          align: TOP_RIGHT
+                          height: 50
+                          styles: home_style                          
+                          text: "설  정"
+                          text_font: regular_40
+                               
+                      - obj:
+                          x: 5
+                          y: 80
+                          align: TOP_LEFT
+                          width: 430
+                          height: 30
+                          styles: home_style
+                          layout:
+                            type: FLEX
+                            flex_flow: ROW
+                            flex_align_main: SPACE_BETWEEN
+                            flex_align_cross: CENTER
+                          widgets:
+                            - label:
+                                text: "화면 밝기"
+                                text_font: regular_25
+                            - label:
+                                text: "0"
+                                text_font: regular_25
+                            - slider:
+                                y: -2
+                                align: BOTTOM_MID
+                                id: slide_brightness
+                                width: 40%
+                                height: 20
+                                value: !lambda return id(backlight_brightness).state;
+                                pad_all: 2
+                                min_value: 5
+                                max_value: 100                                
+                                indicator:
+                                  bg_color: 0x003866
+                                  bg_grad_color: 0x4adeff
+                                  bg_grad_dir: HOR
+                                  bg_opa: COVER
+                                  height: 20
+                                on_release:
+                                  then:
+                                    - light.control:
+                                        id: backlight
+                                        brightness: !lambda return x / 100;
+                                    - number.set:
+                                        id: backlight_brightness
+                                        value: !lambda return x;
+                            - label:
+                                text: "100"
+                                
+                                text_font: regular_25
+                      - obj:
+                          x: 5
+                          y: 160
+                          align: TOP_LEFT
+                          width: 200
+                          height: 50
+                          styles: home_style
+                          layout:
+                            type: FLEX
+                            flex_flow: ROW
+                            flex_align_main: START
+                          widgets:
+                            - label:
+                                align: LEFT_MID
+                                text: "화면 복귀(S)"
+                                text_font: regular_25                                
+                      - obj:
+                          x: -5
+                          y: 155
+                          align: TOP_RIGHT
+                          width: 55%
+                          height: 50
+                          styles: home_style
+                          text_font: regular_25
+                          layout:
+                            type: FLEX
+                            flex_flow: ROW
+                            flex_align_main: END
+                          widgets:                           
+                            - button:
+                                height: 50
+                                width: 50
+                                on_click:
+                                  - lvgl.spinbox.decrement: return_spin
+                                widgets:
+                                  - label:
+                                      text: "-"
+                                      align: CENTER
+                            - spinbox:
+                                width: 100
+                                height: 50
+                                id: return_spin                                
+                                align: BOTTOM_MID
+                                text_font: regular_20
+                                text_align: CENTER
+                                range_from: 10
+                                range_to: 300
+                                step: 5
+                                value: !lambda return id(return_timeout).state;
+                                rollover: false                                
+                                digits: 3
+                                decimal_places: 0                                
+                                on_value:
+                                  then:
+                                    - number.set:
+                                        id: return_timeout
+                                        value: !lambda return x;
+                            - button:
+                                height: 50
+                                width: 50
+                                on_click:
+                                  - lvgl.spinbox.increment: return_spin
+                                widgets:
+                                  - label:
+                                      text: "+"
+                                      align: CENTER                                
+                      - obj:
+                          x: 5
+                          y: 235
+                          align: TOP_LEFT
+                          width: 200
+                          height: 50
+                          styles: home_style
+                          layout:
+                            type: FLEX
+                            flex_flow: ROW
+                            flex_align_main: START
+                          widgets:
+                            - label:
+                                align: LEFT_MID
+                                text: "절전 시간(S)"
+                                text_font: regular_25
+                      - obj:
+                          x: -5
+                          y: 230
+                          align: TOP_RIGHT
+                          width: 55%
+                          height: 50
+                          styles: home_style
+                          text_font: regular_25
+                          layout:
+                            type: FLEX
+                            flex_flow: ROW
+                            flex_align_main: END
+                          widgets:                           
+                            - button:
+                                height: 50
+                                width: 50
+                                on_click:
+                                  - lvgl.spinbox.decrement: idle_spin
+                                widgets:
+                                  - label:
+                                      text: "-"
+                                      align: CENTER
+                            - spinbox:
+                                width: 100
+                                height: 50
+                                id: idle_spin
+                                align: BOTTOM_MID                                
+                                text_align: CENTER
+                                text_font: regular_20
+                                range_from: 10
+                                range_to: 300
+                                step: 5
+                                value: !lambda return id(screen_timeout).state;
+                                rollover: false                                
+                                digits: 3
+                                decimal_places: 0                                
+                                on_value:
+                                  then:
+                                    - number.set:
+                                        id: screen_timeout
+                                        value: !lambda return x;
+                            - button:
+                                height: 50
+                                width: 50
+                                on_click:
+                                  - lvgl.spinbox.increment: idle_spin
+                                widgets:
+                                  - label:
+                                      text: "+"
+                                      align: CENTER
