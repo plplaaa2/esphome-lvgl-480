@@ -929,33 +929,16 @@ text_sensor:
             - script.execute: light_up
             - lvgl.page.show: climate_page
 
-# 가습기 텍스트 센서
-
-# 공기청정기 텍스트 센서
- 
-# 블라인드 텍스트 센서
- 
             
 binary_sensor:
   - platform: status
     name: "${name} Connection Status"
   
-# 거실 감지
-
-#창문 센서
-                        
-#도어센서
-
-#실외 센서
-
-#미디어 센서
-
 button:    
   - platform: restart
     name: "${name} Restart"
     id: re_start
     entity_category: diagnostic
-
 
 sensor:
    # 와이파이 신호 세기
@@ -1103,15 +1086,6 @@ sensor:
             - script.execute: light_up
             - lvgl.page.show: climate_page
                          
-# 가습기센서
-                             
-# 공기청정기 센서
-
-# 블라인드 센서
-            
-#미디어 센서
- 
-
 lvgl:
   displays: 
     - my_display
