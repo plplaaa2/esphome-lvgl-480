@@ -3,7 +3,7 @@ For Esphome-lvgl-480x480 (Guition 4" ESP32 S3 LVGL Display Switch)
 
 **Note, this is for reference, not for everyone.**
 
-This is for Korean users and does not fit the English language.
+This is for esphome Korean users and does not fit the English language.
 
 The weather included in the source has to use certain components in Korea, so you have to change the weather sensor to one that suits you.
 
