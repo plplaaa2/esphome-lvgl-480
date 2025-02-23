@@ -1,4 +1,4 @@
-# esphome-lvgl-480
+# esphome-lvgl-480-KC
 For Esphome-lvgl-480x480 (Guition 4" ESP32 S3 LVGL Display Switch)
 
 I'm not a developer, so I don't really use annotations.
